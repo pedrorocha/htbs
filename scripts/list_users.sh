@@ -1,10 +1,12 @@
 #!/bin/bash
 
+# loading configuration
+source mylan.conf
+
 #for arg in $@; do
 #	FIELDS="$FIELDS, $arg"
 #done
 
-DB_NAME=mylan
 TABLE=users
 
 if [[ -z $1 ]]; then
@@ -16,4 +18,4 @@ else
 fi
 
 # query database
-psql -d $DB_NAME -c "SELECT $FIELDS FROM $TABLE" -q -t -A -F ' '
+psql -d $DB_NAME -U $DB_USER -c "SELECT $FIELDS FROM $TABLE" -q -t -A -F ' '

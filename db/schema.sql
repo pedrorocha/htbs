@@ -1,16 +1,16 @@
 CREATE TABLE users (
-    id_user serial NOT NULL,
+	id_user serial NOT NULL,
 
 	-- authentication
-    login character varying(128) NOT NULL UNIQUE,
-    password character varying(40) NOT NULL,
+	login character varying(128) NOT NULL UNIQUE,
+	password character varying(40) NOT NULL,
 
 
 	-- optional personal information
-    name character varying(256),
-    email character varying(128),
-    address character varying(128),
-    phone character varying(64),
+	name character varying(256),
+	email character varying(128),
+	address character varying(128),
+	phone character varying(64),
 
 
 	----------------
