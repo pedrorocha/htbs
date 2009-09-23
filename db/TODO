@@ -3,5 +3,4 @@ TODO list
 =========
 
 
-- Fazer uma procedure/view 'expired_users' em que o script que roda no cron irá
-	selecionar quais sessões matar.
+- Criar procedures disparadas quando mudar o valor de logged. Ler 'schema.sql'.

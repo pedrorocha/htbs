@@ -39,3 +39,27 @@ CREATE TABLE users (
 
 	PRIMARY KEY(id_user)
 );
+
+
+-- TODO: when the user is expired the remaining time overflows. Must fix it..
+CREATE VIEW logged_users AS 
+		SELECT 
+			login, 
+			host, 
+			credits - (CURRENT_TIMESTAMP - logged_at) AS remaining
+		FROM
+			users
+		WHERE
+			logged = 't';
+
+
+CREATE VIEW expired_users AS 
+		SELECT 
+			login, 
+			host
+		FROM 
+			users
+		WHERE
+			logged = 't'
+		AND
+			(logged_at + credits) < CURRENT_TIMESTAMP;

@@ -1,9 +1,9 @@
 -- this should use sha1 hash (40 bits long)
 
 -- logged
-INSERT INTO users (login, password, logged_at, logged) VALUES ('guest1', md5('guest1'), CURRENT_TIMESTAMP, 't');
-INSERT INTO users (login, password, logged_at, logged) VALUES ('guest2', md5('guest2'), CURRENT_TIMESTAMP, 't');
-INSERT INTO users (login, password, logged_at, logged) VALUES ('guest3', md5('guest3'), CURRENT_TIMESTAMP, 't');
+INSERT INTO users (login, password, host, logged_at, logged) VALUES ('guest1', md5('guest1'), '10.1.1.5', CURRENT_TIMESTAMP, 't');
+INSERT INTO users (login, password, host, logged_at, logged) VALUES ('guest2', md5('guest2'), '10.1.1.8', CURRENT_TIMESTAMP, 't');
+INSERT INTO users (login, password, host, logged_at, logged) VALUES ('guest3', md5('guest3'), '10.1.1.13', CURRENT_TIMESTAMP, 't');
 
 -- not logged
 INSERT INTO users (login, password) VALUES ('guest4', md5('guest4'));
