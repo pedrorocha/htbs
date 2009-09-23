@@ -1,0 +1,7 @@
+=========
+TODO list
+=========
+
+
+- Fazer uma procedure/view 'expired_users' em que o script que roda no cron irá
+	selecionar quais sessões matar.

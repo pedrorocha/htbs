@@ -29,5 +29,13 @@ CREATE TABLE users (
 	-- changing to false must update user credits.
 	logged boolean DEFAULT false,
 
+	
+	----------------
+	-- login information
+
+	-- this should also be setted in login to inform which host
+	-- the user is logged (IP or DNS name)
+	host character varying(512) DEFAULT NULL,
+
 	PRIMARY KEY(id_user)
 );
