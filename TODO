@@ -1,0 +1,14 @@
+=========
+TODO List
+=========
+
+-->	group applications using the standard cgroup_blkio interface instead
+	of the ugly ioprio work-around.
+
+--> use macros to reduce code repetition in sysfs functions.
+
+--> fill this TODO list.. :-)
+
+
+---
+Pedro Eugenio Rocha
