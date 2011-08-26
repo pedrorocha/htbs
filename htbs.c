@@ -67,8 +67,8 @@ struct htbs_group {
 	/* task number */
 	unsigned int task_pid;
 
-	/* jiffies of the last token update */
-	jiffies_t last_updated;
+	/* jiffies of the last token uhdate */
+	jiffies_t last_uhdated;
 
 	/* tokens held */
 	int tokens;
@@ -104,27 +104,27 @@ int parameters[8][4] = {{1000, 0, 100},		// ioprio0
 						{1000, 0, 100}};	// ioprio7
 
 /*
- * updating the number of tokens of a group
+ * uhdating the number of tokens of a group
  */
 static void
-htbs_update_num_tokens(struct htbs_group *hg)
+htbs_uhdate_num_tokens(struct htbs_group *hg)
 {
 	int new_tokens;
 
-	DEBUG(DEBUG_TOKEN, "[%d] last updated: [%ld], current: [%ld], elapsed: [%d]\n", 
+	DEBUG(DEBUG_TOKEN, "[%d] last uhdated: [%ld], current: [%ld], elapsed: [%d]\n", 
 						hg->task_pid,
-						hg->last_updated, 
+						hg->last_uhdated, 
 						jiffies, 
-						jiffies_to_msecs(jiffies - hg->last_updated));
+						jiffies_to_msecs(jiffies - hg->last_uhdated));
 
 	DEBUG(DEBUG_TOKEN, "[%d] Rebuy before: [%d] tokens\n", hg->task_pid, hg->tokens);
 
-	new_tokens = (hg->bw * jiffies_to_msecs(jiffies - hg->last_updated))/10;
+	new_tokens = (hg->bw * jiffies_to_msecs(jiffies - hg->last_uhdated))/10;
 
 	/* there are new tokens*/
 	if (new_tokens) {
 		hg->tokens += new_tokens;
-		hg->last_updated = jiffies;
+		hg->last_uhdated = jiffies;
 	}
 
 	if (hg->tokens > ((hg->bw + hg->burst) * 100))
@@ -195,7 +195,7 @@ static void
 htbs_scheduler_dispatch(unsigned long data)
 {
     struct request_queue *q = (struct request_queue *)data;
-	struct htbs_data *md = q->elevator->elevator_data;
+	struct htbs_data *hd = q->elevator->elevator_data;
 
 
     DEBUG(DEBUG_DISPATCH, "[%ld] Scheduler dispatch\n", jiffies);
@@ -208,30 +208,30 @@ htbs_scheduler_dispatch(unsigned long data)
 	if (!current_queue->num_reqs)
 		current_queue = NULL;
 
-	DEBUG(DEBUG_DISPATCH, "[%ld] Requests left: [%d]\n", jiffies, md->total_reqs);
+	DEBUG(DEBUG_DISPATCH, "[%ld] Requests left: [%d]\n", jiffies, hd->total_reqs);
 
     /* run the queue */
     blk_run_queue(q);
 }
 
 static void
-htbs_schedule_next_dispatch(struct htbs_data *md)
+htbs_schedule_next_dispatch(struct htbs_data *hd)
 {
 	jiffies_t until;
 
 
-	until = jiffies + msecs_to_jiffies(md->max_idle_time);
+	until = jiffies + msecs_to_jiffies(hd->max_idle_time);
 
     DEBUG(DEBUG_DISPATCH, "[%ld] Scheduling next dispatch to ", jiffies);
 
 	/* is there a timer already? */
-    if (timer_pending(&md->htbs_timer)) {
+    if (timer_pending(&hd->htbs_timer)) {
         DEBUG(DEBUG_DISPATCH, "[%ld] already scheduled.. aborted.\n", until);
         return;
     }
 
 	/* set up the timer otherwise */
-    if (mod_timer(&md->htbs_timer, until)) {
+    if (mod_timer(&hd->htbs_timer, until)) {
         DEBUG(DEBUG_DISPATCH, "[%ld] ERROR setting up timer.\n", until);
         return;
     }
@@ -246,19 +246,19 @@ htbs_schedule_next_dispatch(struct htbs_data *md)
  * controls whether to go idle or not.
  */
 struct htbs_group*
-htbs_select_queue(struct htbs_data* md, int force)
+htbs_select_queue(struct htbs_data* hd, int force)
 {
 	struct htbs_group *cur, *lowest_f;
 
 	/* all queues are empty */
-	if (md->total_reqs == 0) {
+	if (hd->total_reqs == 0) {
 		DEBUG(DEBUG_DISPATCH, "[%ld] No more requests.\n", jiffies);
 		return NULL;
 	}
 
 	if (current_queue) {
 
-		if ((current_queue->round_reqs < md->max_reqs) 
+		if ((current_queue->round_reqs < hd->max_reqs) 
 			&& (current_queue->is_sequential == 1)
 			&& (current_queue->tokens > 0)) {
 
@@ -268,16 +268,16 @@ htbs_select_queue(struct htbs_data* md, int force)
 			/* scheduling the next dispatch to wait for the 
 			 * next I/O from the same queue 
 			 */
-			htbs_schedule_next_dispatch(md);
+			htbs_schedule_next_dispatch(hd);
 			return NULL;
 		}
 	}
 
 	/* if we get here, we must change the current_queue */
-	lowest_f = list_entry(md->htbs_groups.next, struct htbs_group, list);
+	lowest_f = list_entry(hd->htbs_groups.next, struct htbs_group, list);
 
 	/* select queue with the lowest finish time (f) */
-	list_for_each_entry(cur, &md->htbs_groups, list) {
+	list_for_each_entry(cur, &hd->htbs_groups, list) {
 
 		if (!cur->num_reqs) continue;
 
@@ -286,7 +286,7 @@ htbs_select_queue(struct htbs_data* md, int force)
 		}
 	}
 	
-	/* updating current queue */
+	/* uhdating current queue */
 	current_queue = lowest_f;
 	current_queue->round_reqs = 0;
 
@@ -299,7 +299,7 @@ htbs_select_queue(struct htbs_data* md, int force)
 static int 
 htbs_dispatch(struct request_queue *q, int force)
 {
-	struct htbs_data *pd = q->elevator->elevator_data;
+	struct htbs_data *hd = q->elevator->elevator_data;
 	struct htbs_group *next_q;
 	struct request *rq;
 
@@ -307,7 +307,7 @@ htbs_dispatch(struct request_queue *q, int force)
 	DEBUG(DEBUG_DISPATCH, "[%ld] Dispatching\n", jiffies);
 
 	/* search for the next queue to serve */
-	next_q = htbs_select_queue(pd, force);
+	next_q = htbs_select_queue(hd, force);
 	if (!next_q) {
 		DEBUG(DEBUG_DISPATCH, "[%ld] Nothing to dispatch now\n", jiffies);
 		return 0;
@@ -317,17 +317,17 @@ htbs_dispatch(struct request_queue *q, int force)
 	rq = list_entry(next_q->req_list.next, struct request, queuelist);
 	list_del_init(&rq->queuelist);
 
-	/* updating min_s */
+	/* uhdating min_s */
 	next_q->min_s = REQ_S(rq);
 
-	/* updating min_f */
+	/* uhdating min_f */
 	if (next_q->num_reqs > 1) {
 		next_q->min_f = REQ_F(list_entry(next_q->req_list.next, struct request, queuelist));
 	}
 
 	next_q->round_reqs++;
 	next_q->num_reqs--;
-	pd->total_reqs--;
+	hd->total_reqs--;
 
 	/* whether we should consider this queue sequential or not */
 	if (next_q->next_sector && next_q->is_sequential)
@@ -356,15 +356,15 @@ htbs_dispatch(struct request_queue *q, int force)
 
 
 static int
-htbs_req_has_priority(struct htbs_data *md, struct htbs_group *mg)
+htbs_req_has_priority(struct htbs_data *hd, struct htbs_group *hg)
 {
 
-	if ((current_queue == mg) && 
-		(!mg->num_reqs) && 
-		(current_queue->round_reqs < md->max_reqs)) {
+	if ((current_queue == hg) && 
+		(!hg->num_reqs) && 
+		(current_queue->round_reqs < hd->max_reqs)) {
 
-    	if (timer_pending(&md->htbs_timer)) {
-			mod_timer(&md->htbs_timer, 0);
+    	if (timer_pending(&hd->htbs_timer)) {
+			mod_timer(&hd->htbs_timer, 0);
 		}
 		return 1;
 	}
@@ -375,14 +375,14 @@ htbs_req_has_priority(struct htbs_data *md, struct htbs_group *mg)
 static void 
 htbs_add_request(struct request_queue *q, struct request *rq)
 {
-	struct htbs_data *pd = q->elevator->elevator_data;
+	struct htbs_data *hd = q->elevator->elevator_data;
 	struct htbs_group *cur;
 	struct task_struct *task = current;
 	int delay_offset;
 
 
 	/* find the right queue */
-	list_for_each_entry(cur, &pd->htbs_groups, list) {
+	list_for_each_entry(cur, &hd->htbs_groups, list) {
 
 		if (cur->ioprio == REQ_IOPRIO(rq)) {
 			break;
@@ -391,16 +391,16 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 
 	/**
 	 * following htbs's algorithm, we should:
-	 * - UpdateNumTokens
+	 * - UhdateNumTokens
 	 * - CheckAndAjustTags
 	 * - ComputeTags
 	 */
 
-	/* UpdateNumTokens */
-	htbs_update_num_tokens(cur);
+	/* UhdateNumTokens */
+	htbs_uhdate_num_tokens(cur);
 
 	/* CheckAndAdjustTags */
-	htbs_adjust_tags(pd);
+	htbs_adjust_tags(hd);
 
 	/* ComputeTags */
 	if (cur->tokens < 1) {
@@ -424,7 +424,7 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 		 * like it was created in the same timestamp as the
 		 * previous one.
 		 */
-		if (htbs_req_has_priority(pd, cur))
+		if (htbs_req_has_priority(hd, cur))
 			REQ_S(rq) = cur->min_s;
 		else
 			REQ_S(rq) = jiffies;
@@ -433,7 +433,7 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 	REQ_F(rq) = REQ_S(rq) + msecs_to_jiffies(cur->delay);
 
 
-	/* now, update per queue control timestamps */
+	/* now, uhdate per queue control timestamps */
 
 	/* queue was empty */
 	if (cur->num_reqs == 0) {
@@ -442,7 +442,7 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 	} 
 	else {
 
-		/* updating timestamps */
+		/* uhdating timestamps */
 		if (REQ_S(rq) < cur->min_s)
 			cur->min_s = REQ_S(rq); 
 
@@ -456,7 +456,7 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 	/* append request to list */
 	list_add_tail(&rq->queuelist, &cur->req_list);
 	cur->num_reqs++;
-	pd->total_reqs++;
+	hd->total_reqs++;
 
 	DEBUG(DEBUG_INCOMMING, "[%ld][%d] Add request (s: [%ld], f: [%ld], sector: [%d], size: [%d])\n", 
 										jiffies,
@@ -466,7 +466,7 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 										(int)rq->bio->bi_sector,
 										(int)rq->bio->bi_size);
 
-	DEBUG(DEBUG_TOKEN, "[%ld][%d] Timestamps updated: (min_s: [%ld], max_s: [%ld], min_f: [%ld])\n",
+	DEBUG(DEBUG_TOKEN, "[%ld][%d] Timestamps uhdated: (min_s: [%ld], max_s: [%ld], min_f: [%ld])\n",
 										jiffies,
 										cur->task_pid,
 									 	cur->min_s,
@@ -489,7 +489,7 @@ static int
 htbs_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 {
 	struct task_struct *task = current;
-	struct htbs_data *pd = q->elevator->elevator_data;
+	struct htbs_data *hd = q->elevator->elevator_data;
 	struct htbs_group *new, *cur;
 	struct htbs_req *preq;
 	struct io_context *ioc;
@@ -516,7 +516,7 @@ htbs_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 	/* setting req ioprio */
 	REQ_IOPRIO(rq) = ioprio;
 
-	list_for_each_entry(cur, &pd->htbs_groups, list) {
+	list_for_each_entry(cur, &hd->htbs_groups, list) {
 
 		/* there is a queue already */
 		if (cur->ioprio == ioprio) {
@@ -528,18 +528,13 @@ htbs_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 	new = kmalloc_node(sizeof(*new), GFP_KERNEL, q->node);
 	new->task_pid = task->pid;
 	new->num_reqs = 0;
-	new->last_updated = jiffies;
+	new->last_uhdated = jiffies;
 	new->round_reqs = 0;
 	new->is_sequential = 1;
 	new->next_sector = 0;
 	new->ioprio = ioprio;
 	new->ioprio_class = ioprio_class;
 
-	/* xunxo para bursts */
-	//if (new->ioprio == 0)
-	//	new->tokens = (parameters[new->ioprio][0] + parameters[new->ioprio][1]) * 100;
-	//else
-	//	new->tokens = parameters[new->ioprio][0] * 100;
 	new->tokens = parameters[new->ioprio][0] * 100;
 	new->bw = parameters[new->ioprio][0];
 	new->burst = parameters[new->ioprio][1];
@@ -553,7 +548,7 @@ htbs_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 																new->delay);
 
 	INIT_LIST_HEAD(&new->req_list);
-	list_add_tail(&new->list, &pd->htbs_groups);
+	list_add_tail(&new->list, &hd->htbs_groups);
 
 	return 0;
 }
@@ -570,11 +565,11 @@ htbs_put_request(struct request *rq)
 static int 
 htbs_queue_empty(struct request_queue *q)
 {
-    struct htbs_data *md = q->elevator->elevator_data;
+    struct htbs_data *hd = q->elevator->elevator_data;
 
 	if (current_queue)
 		return !current_queue->num_reqs;
-    return !md->total_reqs;
+    return !hd->total_reqs;
 }
 
 /*
@@ -582,31 +577,31 @@ htbs_queue_empty(struct request_queue *q)
  */
 static void *htbs_init_queue(struct request_queue *q)
 {
-	struct htbs_data *md;
+	struct htbs_data *hd;
 
-	md = kmalloc_node(sizeof(*md), GFP_KERNEL, q->node);
-	if (!md)
+	hd = kmalloc_node(sizeof(*hd), GFP_KERNEL, q->node);
+	if (!hd)
 		return NULL;
 
 	/* initializing queues */
-	INIT_LIST_HEAD(&md->queue);
-	INIT_LIST_HEAD(&md->htbs_groups);
-	md->total_reqs = 0;
-	md->max_reqs = DEFAULT_MAX_REQS_PER_ROUND;
-	md->max_idle_time = DEFAULT_MAX_IDLE_TIME;
+	INIT_LIST_HEAD(&hd->queue);
+	INIT_LIST_HEAD(&hd->htbs_groups);
+	hd->total_reqs = 0;
+	hd->max_reqs = DEFAULT_MAX_REQS_PER_ROUND;
+	hd->max_idle_time = DEFAULT_MAX_IDLE_TIME;
 
-	setup_timer(&md->htbs_timer, htbs_scheduler_dispatch, (unsigned long)q);
+	setup_timer(&hd->htbs_timer, htbs_scheduler_dispatch, (unsigned long)q);
 
-	return md;
+	return hd;
 }
 
 static void htbs_exit_queue(struct elevator_queue *e)
 {
-	struct htbs_data *md = e->elevator_data;
+	struct htbs_data *hd = e->elevator_data;
 
-	del_timer(&md->htbs_timer);
-	BUG_ON(!list_empty(&md->queue));
-	kfree(md);
+	del_timer(&hd->htbs_timer);
+	BUG_ON(!list_empty(&hd->queue));
+	kfree(hd);
 }
 
 
@@ -616,19 +611,19 @@ static void htbs_exit_queue(struct elevator_queue *e)
 static ssize_t 
 htbs_max_reqs_show(struct elevator_queue *e, char *page)
 {
-    struct htbs_data *md = e->elevator_data;
+    struct htbs_data *hd = e->elevator_data;
 
-    return sprintf(page, "%d\n", md->max_reqs);
+    return sprintf(page, "%d\n", hd->max_reqs);
 }
 
 static ssize_t 
 htbs_max_reqs_store(struct elevator_queue *e, const char *page, size_t count)
 {
-    struct htbs_data *md = e->elevator_data;
+    struct htbs_data *hd = e->elevator_data;
 	char *p = (char *)page;
 
-    md->max_reqs = simple_strtol(p, &p, 10);
-	DEBUG(DEBUG_DISPATCH, "Max reqs changed to: [%d]\n", md->max_reqs);
+    hd->max_reqs = simple_strtol(p, &p, 10);
+	DEBUG(DEBUG_DISPATCH, "Max reqs changed to: [%d]\n", hd->max_reqs);
 	return count;
 }
 
@@ -685,4 +680,4 @@ module_exit(htbs_exit);
 
 MODULE_AUTHOR("Pedro Eugenio Rocha");
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("The HTBS IO scheduler");
+MODULE_DESCRIPTION("The HTBS I/O scheduler");
