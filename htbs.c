@@ -16,7 +16,7 @@
 #define REQ_IOPRIO(x)		((struct htbs_req*)((x)->elevator_private))->ioprio
 
 #define DEFAULT_MAX_IDLE_TIME		10		// max time to wait for the next I/O of a queue
-#define DEFAULT_MAX_REQS_PER_ROUND	1		// max number of request to serve for an application in a row
+#define DEFAULT_MAX_REQS_PER_ROUND	20		// max number of request to serve for an application in a row
 
 #define DEBUG_NEW_QUEUE				1		// show all incomming requests
 #define DEBUG_INCOMMING				2		// show all incomming requests
@@ -25,11 +25,14 @@
 #define DEBUG_DRIFT					16		// debug timestamp drifts (spare bandwidth)
 #define DEBUG_DELAY					32		// debug request delaying (token count exceeded)
 
-#define DEBUG_LEVEL					0		// actual debug level
+#define DEBUG_LEVEL_DEFAULT			0
 
 #define DEBUG(_type, _fmt, ...)		\
-		if (DEBUG_LEVEL & _type) printk(_fmt, __VA_ARGS__)
+		if ((debug_level) & _type) printk(_fmt, __VA_ARGS__)
 
+
+/* stores actual debug level */
+unsigned short int debug_level = DEBUG_LEVEL_DEFAULT;
 
 typedef unsigned long int jiffies_t;
 
@@ -67,8 +70,8 @@ struct htbs_group {
 	/* task number */
 	unsigned int task_pid;
 
-	/* jiffies of the last token uhdate */
-	jiffies_t last_uhdated;
+	/* jiffies of the last token update */
+	jiffies_t last_updated;
 
 	/* tokens held */
 	int tokens;
@@ -107,24 +110,24 @@ int parameters[8][4] = {{1000, 0, 100},		// ioprio0
  * uhdating the number of tokens of a group
  */
 static void
-htbs_uhdate_num_tokens(struct htbs_group *hg)
+htbs_update_num_tokens(struct htbs_group *hg)
 {
 	int new_tokens;
 
-	DEBUG(DEBUG_TOKEN, "[%d] last uhdated: [%ld], current: [%ld], elapsed: [%d]\n", 
+	DEBUG(DEBUG_TOKEN, "[%d] last updated: [%ld], current: [%ld], elapsed: [%d]\n", 
 						hg->task_pid,
-						hg->last_uhdated, 
+						hg->last_updated, 
 						jiffies, 
-						jiffies_to_msecs(jiffies - hg->last_uhdated));
+						jiffies_to_msecs(jiffies - hg->last_updated));
 
 	DEBUG(DEBUG_TOKEN, "[%d] Rebuy before: [%d] tokens\n", hg->task_pid, hg->tokens);
 
-	new_tokens = (hg->bw * jiffies_to_msecs(jiffies - hg->last_uhdated))/10;
+	new_tokens = (hg->bw * jiffies_to_msecs(jiffies - hg->last_updated))/10;
 
 	/* there are new tokens*/
 	if (new_tokens) {
 		hg->tokens += new_tokens;
-		hg->last_uhdated = jiffies;
+		hg->last_updated = jiffies;
 	}
 
 	if (hg->tokens > ((hg->bw + hg->burst) * 100))
@@ -391,13 +394,13 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 
 	/**
 	 * following htbs's algorithm, we should:
-	 * - UhdateNumTokens
+	 * - UpdateNumTokens
 	 * - CheckAndAjustTags
 	 * - ComputeTags
 	 */
 
-	/* UhdateNumTokens */
-	htbs_uhdate_num_tokens(cur);
+	/* UpdateNumTokens */
+	htbs_update_num_tokens(cur);
 
 	/* CheckAndAdjustTags */
 	htbs_adjust_tags(hd);
@@ -433,7 +436,7 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 	REQ_F(rq) = REQ_S(rq) + msecs_to_jiffies(cur->delay);
 
 
-	/* now, uhdate per queue control timestamps */
+	/* now, update per queue control timestamps */
 
 	/* queue was empty */
 	if (cur->num_reqs == 0) {
@@ -466,7 +469,7 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 										(int)rq->bio->bi_sector,
 										(int)rq->bio->bi_size);
 
-	DEBUG(DEBUG_TOKEN, "[%ld][%d] Timestamps uhdated: (min_s: [%ld], max_s: [%ld], min_f: [%ld])\n",
+	DEBUG(DEBUG_TOKEN, "[%ld][%d] Timestamps updated: (min_s: [%ld], max_s: [%ld], min_f: [%ld])\n",
 										jiffies,
 										cur->task_pid,
 									 	cur->min_s,
@@ -528,7 +531,7 @@ htbs_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 	new = kmalloc_node(sizeof(*new), GFP_KERNEL, q->node);
 	new->task_pid = task->pid;
 	new->num_reqs = 0;
-	new->last_uhdated = jiffies;
+	new->last_updated = jiffies;
 	new->round_reqs = 0;
 	new->is_sequential = 1;
 	new->next_sector = 0;
@@ -621,9 +624,69 @@ htbs_max_reqs_store(struct elevator_queue *e, const char *page, size_t count)
 {
     struct htbs_data *hd = e->elevator_data;
 	char *p = (char *)page;
+	int value = simple_strtol(p, &p, 10);
 
-    hd->max_reqs = simple_strtol(p, &p, 10);
-	DEBUG(DEBUG_DISPATCH, "Max reqs changed to: [%d]\n", hd->max_reqs);
+	/* checking input */
+	if (value < 1) 
+		value = 1;
+	else if (value > UINT_MAX)
+		value = UINT_MAX;
+
+    hd->max_reqs = (unsigned int)value;
+	printk("htbs: max_reqs changed to %d\n", hd->max_reqs);
+	return count;
+}
+
+static ssize_t 
+htbs_debug_level_show(struct elevator_queue *e, char *page)
+{
+    return sprintf(page, "%hd\n", debug_level);
+}
+
+static ssize_t 
+htbs_debug_level_store(struct elevator_queue *e, const char *page, size_t count)
+{
+	char *p = (char *)page;
+	int value = simple_strtol(p, &p, 10);
+
+	/* checking input */
+	if (value < 0) 
+		value = 0;
+	else if (value > 63)
+		value = 63;
+
+	debug_level = (unsigned short int)value;
+	printk("htbs: debug_level changed to %hd\n", debug_level);
+
+	return count;
+}
+
+static ssize_t 
+htbs_cleanup_show(struct elevator_queue *e, char *page)
+{
+    return sprintf(page, "0\n");
+}
+
+static ssize_t 
+htbs_cleanup_store(struct elevator_queue *e, const char *page, size_t count)
+{
+    struct htbs_data *hd = e->elevator_data;
+	struct htbs_group *cur;
+
+	printk("htbs: do cleanup\n");
+
+	/* find the right queue */
+	list_for_each_entry(cur, &hd->htbs_groups, list) {
+
+		/* TODO: here we should also reset queue and per-request
+		 * tags to a default value.
+		 */
+		cur->last_updated = jiffies;
+		cur->round_reqs = 0;
+		cur->is_sequential = 1;
+		cur->next_sector = 0;
+		cur->tokens = parameters[cur->ioprio][0] * 100;
+	}
 	return count;
 }
 
@@ -633,6 +696,8 @@ htbs_max_reqs_store(struct elevator_queue *e, const char *page, size_t count)
  */
 static struct elv_fs_entry htbs_attrs[] = {
 	__ATTR(max_reqs, S_IRUGO|S_IWUSR, htbs_max_reqs_show, htbs_max_reqs_store),
+	__ATTR(debug_level, S_IRUGO|S_IWUSR, htbs_debug_level_show, htbs_debug_level_store),
+	__ATTR(cleanup, S_IRUGO|S_IWUSR, htbs_cleanup_show, htbs_cleanup_store),
 	__ATTR_NULL,
 };
 
@@ -661,8 +726,7 @@ static struct elevator_type elevator_htbs = {
 static int __init htbs_init(void)
 {
 	elv_register(&elevator_htbs);
-
-	printk("Loading htbs!\n");
+	printk("htbs: loaded\n");
 
 	return 0;
 }
@@ -670,8 +734,7 @@ static int __init htbs_init(void)
 static void __exit htbs_exit(void)
 {
 	elv_unregister(&elevator_htbs);
-
-	printk("Unloading htbs. Bye.\n");
+	printk("htbs: unloading. Bye!\n");
 }
 
 module_init(htbs_init);
