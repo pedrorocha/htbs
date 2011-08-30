@@ -11,23 +11,23 @@
 #include <linux/cgroup.h>
 
 
-#define REQ_S(x)			((struct htbs_req*)((x)->elevator_private))->s
-#define REQ_F(x)			((struct htbs_req*)((x)->elevator_private))->f
+#define REQ_S(x)		((struct htbs_req*)((x)->elevator_private))->s
+#define REQ_F(x)		((struct htbs_req*)((x)->elevator_private))->f
 #define REQ_IOPRIO(x)		((struct htbs_req*)((x)->elevator_private))->ioprio
 
 #define DEFAULT_MAX_IDLE_TIME		10		// max time to wait for the next I/O of a queue
 #define DEFAULT_MAX_REQS_PER_ROUND	20		// max number of request to serve for an application in a row
 
-#define DEBUG_NEW_QUEUE				1		// show all incomming requests
-#define DEBUG_INCOMMING				2		// show all incomming requests
-#define DEBUG_DISPATCH				4		// debug dispatched requests
-#define DEBUG_TOKEN					8		// debug per queue token count
-#define DEBUG_DRIFT					16		// debug timestamp drifts (spare bandwidth)
-#define DEBUG_DELAY					32		// debug request delaying (token count exceeded)
+#define DEBUG_NEW_QUEUE			1		// show all incomming requests
+#define DEBUG_INCOMMING			2		// show all incomming requests
+#define DEBUG_DISPATCH			4		// debug dispatched requests
+#define DEBUG_TOKEN			8		// debug per queue token count
+#define DEBUG_DRIFT			16		// debug timestamp drifts (spare bandwidth)
+#define DEBUG_DELAY			32		// debug request delaying (token count exceeded)
 
-#define DEBUG_LEVEL_DEFAULT			0
+#define DEBUG_LEVEL_DEFAULT		0
 
-#define DEBUG(_type, _fmt, ...)		\
+#define DEBUG(_type, _fmt, ...)	\
 		if ((debug_level) & _type) printk(_fmt, __VA_ARGS__)
 
 
@@ -48,8 +48,8 @@ struct htbs_data {
 	/* per proccess queues */
 	struct list_head htbs_groups;
 
-    /* timer to idle queues */
-    struct timer_list htbs_timer;
+	/* timer to idle queues */
+	struct timer_list htbs_timer;
 
 	unsigned int total_reqs;
 
@@ -98,16 +98,16 @@ struct htbs_group* current_queue = NULL;
  * per ioprio parameters
  */
 int parameters[8][4] = {{1000, 0, 100},		// ioprio0
-						{1000, 0, 100},		// ioprio1
-						{1000, 0, 100},		// ioprio2
-						{1000, 0, 100},		// ioprio3
-						{1000, 0, 100},		// ioprio4 is default
-						{1000, 0, 100},		// ioprio5
-						{1000, 0, 100},		// ioprio6
-						{1000, 0, 100}};	// ioprio7
+			{1000, 0, 100},		// ioprio1
+			{1000, 0, 100},		// ioprio2
+			{1000, 0, 100},		// ioprio3
+			{1000, 0, 100},		// ioprio4 is default
+			{1000, 0, 100},		// ioprio5
+			{1000, 0, 100},		// ioprio6
+			{1000, 0, 100}};	// ioprio7
 
 /*
- * uhdating the number of tokens of a group
+ * updating the number of tokens of a group
  */
 static void
 htbs_update_num_tokens(struct htbs_group *hg)
@@ -197,11 +197,11 @@ htbs_adjust_tags(struct htbs_data *hd)
 static void
 htbs_scheduler_dispatch(unsigned long data)
 {
-    struct request_queue *q = (struct request_queue *)data;
+	struct request_queue *q = (struct request_queue *)data;
 	struct htbs_data *hd = q->elevator->elevator_data;
 
 
-    DEBUG(DEBUG_DISPATCH, "[%ld] Scheduler dispatch\n", jiffies);
+	DEBUG(DEBUG_DISPATCH, "[%ld] Scheduler dispatch\n", jiffies);
 
 	/* 
 	 * if the timer expired, this function was called,
@@ -213,8 +213,8 @@ htbs_scheduler_dispatch(unsigned long data)
 
 	DEBUG(DEBUG_DISPATCH, "[%ld] Requests left: [%d]\n", jiffies, hd->total_reqs);
 
-    /* run the queue */
-    blk_run_queue(q);
+	/* run the queue */
+	blk_run_queue(q);
 }
 
 static void
@@ -225,23 +225,23 @@ htbs_schedule_next_dispatch(struct htbs_data *hd)
 
 	until = jiffies + msecs_to_jiffies(hd->max_idle_time);
 
-    DEBUG(DEBUG_DISPATCH, "[%ld] Scheduling next dispatch to ", jiffies);
+	DEBUG(DEBUG_DISPATCH, "[%ld] Scheduling next dispatch to ", jiffies);
 
 	/* is there a timer already? */
-    if (timer_pending(&hd->htbs_timer)) {
-        DEBUG(DEBUG_DISPATCH, "[%ld] already scheduled.. aborted.\n", until);
-        return;
-    }
+	if (timer_pending(&hd->htbs_timer)) {
+		DEBUG(DEBUG_DISPATCH, "[%ld] already scheduled.. aborted.\n", until);
+		return;
+	}
 
 	/* set up the timer otherwise */
-    if (mod_timer(&hd->htbs_timer, until)) {
-        DEBUG(DEBUG_DISPATCH, "[%ld] ERROR setting up timer.\n", until);
-        return;
-    }
+	if (mod_timer(&hd->htbs_timer, until)) {
+		DEBUG(DEBUG_DISPATCH, "[%ld] ERROR setting up timer.\n", until);
+		return;
+	}
 	else
 		DEBUG(DEBUG_DISPATCH, "[%ld] OK.\n", until);
 
-    return;
+	return;
 }
 
 /*
@@ -344,14 +344,14 @@ htbs_dispatch(struct request_queue *q, int force)
 		next_q->next_sector = rq->bio->bi_sector + (rq->bio->bi_size / 512);
 
 	DEBUG(DEBUG_DISPATCH, "[%ld][%d] Dispatch request (s: [%ld], f: [%ld], rr: [%d], sector: [%d], size: [%d], next_sector[%d])\n", 
-									jiffies,
-									next_q->task_pid,
-									REQ_S(rq),
-									REQ_F(rq),
-									next_q->round_reqs,
-									(int)rq->bio->bi_sector,
-									(int)rq->bio->bi_size,
-									(int)next_q->next_sector);
+						jiffies,
+						next_q->task_pid,
+						REQ_S(rq),
+						REQ_F(rq),
+						next_q->round_reqs,
+						(int)rq->bio->bi_sector,
+						(int)rq->bio->bi_size,
+						(int)next_q->next_sector);
 
 	elv_dispatch_sort(q, rq);
 	return 1;
@@ -462,19 +462,19 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 	hd->total_reqs++;
 
 	DEBUG(DEBUG_INCOMMING, "[%ld][%d] Add request (s: [%ld], f: [%ld], sector: [%d], size: [%d])\n", 
-										jiffies,
-										task->pid,
-										REQ_S(rq),
-										REQ_F(rq),
-										(int)rq->bio->bi_sector,
-										(int)rq->bio->bi_size);
+						jiffies,
+						task->pid,
+						REQ_S(rq),
+						REQ_F(rq),
+						(int)rq->bio->bi_sector,
+						(int)rq->bio->bi_size);
 
 	DEBUG(DEBUG_TOKEN, "[%ld][%d] Timestamps updated: (min_s: [%ld], max_s: [%ld], min_f: [%ld])\n",
-										jiffies,
-										cur->task_pid,
-									 	cur->min_s,
-										cur->max_s,
-										cur->min_f);
+						jiffies,
+						cur->task_pid,
+						cur->min_s,
+						cur->max_s,
+						cur->min_f);
 
 									
 	/* decreasing token number */
@@ -508,7 +508,7 @@ htbs_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 	/* which queue to attach? */
 	ioc = get_io_context(gfp_mask, q->node);
 	if (!ioc)
-		printk("ERRO: Unable to get iocontext\n");
+		printk("ERROR: Unable to get iocontext\n");
 
 	/* getting io priority */
 	ioprio = task_ioprio(ioc);
@@ -543,12 +543,12 @@ htbs_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 	new->burst = parameters[new->ioprio][1];
 	new->delay = parameters[new->ioprio][2];
 	DEBUG(DEBUG_NEW_QUEUE, "[%ld][%d] Creating new queue with ioprio [%hi] ([%d] [%d] [%d])\n", 
-																jiffies, 
-																task->pid,
-																new->ioprio,
-																new->bw,
-																new->burst,
-																new->delay);
+						jiffies, 
+						task->pid,
+						new->ioprio,
+						new->bw,
+						new->burst,
+						new->delay);
 
 	INIT_LIST_HEAD(&new->req_list);
 	list_add_tail(&new->list, &hd->htbs_groups);
@@ -568,11 +568,11 @@ htbs_put_request(struct request *rq)
 static int 
 htbs_queue_empty(struct request_queue *q)
 {
-    struct htbs_data *hd = q->elevator->elevator_data;
+	struct htbs_data *hd = q->elevator->elevator_data;
 
 	if (current_queue)
 		return !current_queue->num_reqs;
-    return !hd->total_reqs;
+	return !hd->total_reqs;
 }
 
 /*
@@ -622,7 +622,7 @@ htbs_max_reqs_show(struct elevator_queue *e, char *page)
 static ssize_t 
 htbs_max_reqs_store(struct elevator_queue *e, const char *page, size_t count)
 {
-    struct htbs_data *hd = e->elevator_data;
+	struct htbs_data *hd = e->elevator_data;
 	char *p = (char *)page;
 	int value = simple_strtol(p, &p, 10);
 
@@ -632,7 +632,7 @@ htbs_max_reqs_store(struct elevator_queue *e, const char *page, size_t count)
 	else if (value > UINT_MAX)
 		value = UINT_MAX;
 
-    hd->max_reqs = (unsigned int)value;
+	hd->max_reqs = (unsigned int)value;
 	printk("htbs: max_reqs changed to %d\n", hd->max_reqs);
 	return count;
 }
@@ -640,7 +640,7 @@ htbs_max_reqs_store(struct elevator_queue *e, const char *page, size_t count)
 static ssize_t 
 htbs_debug_level_show(struct elevator_queue *e, char *page)
 {
-    return sprintf(page, "%hd\n", debug_level);
+	return sprintf(page, "%hd\n", debug_level);
 }
 
 static ssize_t 
@@ -664,13 +664,13 @@ htbs_debug_level_store(struct elevator_queue *e, const char *page, size_t count)
 static ssize_t 
 htbs_cleanup_show(struct elevator_queue *e, char *page)
 {
-    return sprintf(page, "0\n");
+	return sprintf(page, "0\n");
 }
 
 static ssize_t 
 htbs_cleanup_store(struct elevator_queue *e, const char *page, size_t count)
 {
-    struct htbs_data *hd = e->elevator_data;
+	struct htbs_data *hd = e->elevator_data;
 	struct htbs_group *cur;
 
 	printk("htbs: do cleanup\n");
@@ -710,15 +710,14 @@ static struct elevator_type elevator_htbs = {
 		.elevator_add_req_fn		= htbs_add_request,
 		.elevator_set_req_fn		= htbs_set_request,
 		.elevator_put_req_fn		= htbs_put_request,
-        .elevator_queue_empty_fn    = htbs_queue_empty,
-		.elevator_init_fn			= htbs_init_queue,
-		.elevator_exit_fn			= htbs_exit_queue,
+		.elevator_queue_empty_fn	= htbs_queue_empty,
+		.elevator_init_fn		= htbs_init_queue,
+		.elevator_exit_fn		= htbs_exit_queue,
 	},
 	.elevator_attrs = htbs_attrs,
 	.elevator_name = "htbs",
 	.elevator_owner = THIS_MODULE,
 };
-
 
 /*
  * Kernel module stuff here
@@ -739,7 +738,6 @@ static void __exit htbs_exit(void)
 
 module_init(htbs_init);
 module_exit(htbs_exit);
-
 
 MODULE_AUTHOR("Pedro Eugenio Rocha");
 MODULE_LICENSE("GPL");
