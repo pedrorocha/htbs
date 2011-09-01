@@ -1,5 +1,14 @@
 /*
- * elevator htbs
+ *  HTBS - High-throughput Token Bucket Scheduler - disk scheduler.
+ *
+ *  Based on ideas from previously defined algorithms such as:
+ *  - CFQ (Jens Axboe) - 2003
+ *  - BFQ (Valente and Checconi) - 2009
+ *  - pClock (Ajay Gulati) - 2009
+ *
+ *  Copyright (C) 2011 Pedro Eugênio Rocha <pedro@c3sl.ufpr.br>
+ *
+ *  Licensed under the GPL-2.
  */
 #include <linux/blkdev.h>
 #include <linux/elevator.h>
