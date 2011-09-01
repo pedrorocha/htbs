@@ -7,13 +7,12 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/init.h>
-#include <linux/ioprio.h>
 #include <linux/cgroup.h>
+#include "blk-cgroup.h"
 
 
 #define REQ_S(x)		((struct htbs_req*)((x)->elevator_private))->s
 #define REQ_F(x)		((struct htbs_req*)((x)->elevator_private))->f
-#define REQ_IOPRIO(x)		((struct htbs_req*)((x)->elevator_private))->ioprio
 
 #define DEFAULT_MAX_IDLE_TIME		10		// max time to wait for the next I/O of a queue
 #define DEFAULT_MAX_REQS_PER_ROUND	20		// max number of request to serve for an application in a row
@@ -39,7 +38,6 @@ typedef unsigned long int jiffies_t;
 struct htbs_req {
 	unsigned long int s;
 	unsigned long int f;
-	unsigned short ioprio;
 };
 
 struct htbs_data {
@@ -57,6 +55,7 @@ struct htbs_data {
 	unsigned int max_idle_time;
 };
 
+/* per group per device structure */
 struct htbs_group {
 	/* per process queue list */
 	struct list_head list;
@@ -82,29 +81,63 @@ struct htbs_group {
 	/* htbs specific parameters */
 	jiffies_t min_s, max_s, min_f;
 
-	/**/
-	int round_reqs, is_sequential;
+	/* number of subsequent requests this group issued */
+	int round_reqs;
+
+	/* whether this group is sequential or not */
+	int is_sequential;
 
 	sector_t next_sector;
 
-	/* ioprio of this queue */
-	unsigned short ioprio, ioprio_class;
+	/* points to cgroup structure */
+	struct blkio_cgroup *blkcg;
 };
 
+/* TODO - move this into htbs_data*/
 /* stores the current queue being served */
 struct htbs_group* current_queue = NULL;
 
+
 /*
- * per ioprio parameters
+ * cgroup functions
  */
-int parameters[8][4] = {{1000, 0, 100},		// ioprio0
-			{1000, 0, 100},		// ioprio1
-			{1000, 0, 100},		// ioprio2
-			{1000, 0, 100},		// ioprio3
-			{1000, 0, 100},		// ioprio4 is default
-			{1000, 0, 100},		// ioprio5
-			{1000, 0, 100},		// ioprio6
-			{1000, 0, 100}};	// ioprio7
+
+/* 
+ * this function should come under blk-cgroup.h 
+ * in newer kernel versions 
+ */
+struct blkio_cgroup*
+task_blkio_cgroup(struct task_struct *tsk)
+{
+	return container_of(task_subsys_state(tsk, blkio_subsys_id),
+				struct blkio_cgroup, css);
+}
+
+struct blkio_cgroup*
+htbs_blkio_get_current(void)
+{
+	return task_blkio_cgroup(current);
+}
+
+unsigned int
+htbs_blkio_get_weight(struct blkio_cgroup *blkcg)
+{
+	return blkcg->weight;
+}
+
+char*
+htbs_blkio_get_path(struct blkio_cgroup *blkcg)
+{
+	struct blkio_group *blkg;
+	struct hlist_node *n;
+
+	/* we definitely should improve this */
+	hlist_for_each_entry_rcu(blkg, n, &blkcg->blkg_list, blkcg_node) {
+		if (blkg->path)
+			return blkg->path;
+	}
+	return "";
+}
 
 /*
  * updating the number of tokens of a group
@@ -114,7 +147,7 @@ htbs_update_num_tokens(struct htbs_group *hg)
 {
 	int new_tokens;
 
-	DEBUG(DEBUG_TOKEN, "[%d] last updated: [%ld], current: [%ld], elapsed: [%d]\n", 
+	DEBUG(DEBUG_TOKEN, "[%d] Last updated: [%ld], current: [%ld], elapsed: [%d]\n", 
 						hg->task_pid,
 						hg->last_updated, 
 						jiffies, 
@@ -343,9 +376,9 @@ htbs_dispatch(struct request_queue *q, int force)
 	if (next_q->is_sequential)
 		next_q->next_sector = rq->bio->bi_sector + (rq->bio->bi_size / 512);
 
-	DEBUG(DEBUG_DISPATCH, "[%ld][%d] Dispatch request (s: [%ld], f: [%ld], rr: [%d], sector: [%d], size: [%d], next_sector[%d])\n", 
+	DEBUG(DEBUG_DISPATCH, "[%ld][%s] Dispatch request (s: [%ld], f: [%ld], rr: [%d], sector: [%d], size: [%d], next_sector[%d])\n", 
 						jiffies,
-						next_q->task_pid,
+						htbs_blkio_get_path(next_q->blkcg),
 						REQ_S(rq),
 						REQ_F(rq),
 						next_q->round_reqs,
@@ -380,32 +413,25 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 {
 	struct htbs_data *hd = q->elevator->elevator_data;
 	struct htbs_group *cur;
-	struct task_struct *task = current;
+	struct blkio_cgroup *blkcg;
 	int delay_offset;
 
+
+	blkcg = htbs_blkio_get_current();
 
 	/* find the right queue */
 	list_for_each_entry(cur, &hd->htbs_groups, list) {
 
-		if (cur->ioprio == REQ_IOPRIO(rq)) {
+		if (cur->blkcg == blkcg) {
 			break;
 		}
 	}
 
-	/**
-	 * following htbs's algorithm, we should:
-	 * - UpdateNumTokens
-	 * - CheckAndAjustTags
-	 * - ComputeTags
-	 */
-
-	/* UpdateNumTokens */
 	htbs_update_num_tokens(cur);
 
-	/* CheckAndAdjustTags */
 	htbs_adjust_tags(hd);
 
-	/* ComputeTags */
+	/* computing tags */
 	if (cur->tokens < 1) {
 		DEBUG(DEBUG_DELAY, "[%ld][%d] Delaying request\n", jiffies, cur->task_pid);
 		delay_offset = msecs_to_jiffies(1000/cur->bw);
@@ -461,9 +487,9 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 	cur->num_reqs++;
 	hd->total_reqs++;
 
-	DEBUG(DEBUG_INCOMMING, "[%ld][%d] Add request (s: [%ld], f: [%ld], sector: [%d], size: [%d])\n", 
+	DEBUG(DEBUG_INCOMMING, "[%ld][%s] Add request (s: [%ld], f: [%ld], sector: [%d], size: [%d])\n", 
 						jiffies,
-						task->pid,
+						htbs_blkio_get_path(cur->blkcg),
 						REQ_S(rq),
 						REQ_F(rq),
 						(int)rq->bio->bi_sector,
@@ -475,12 +501,47 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 						cur->min_s,
 						cur->max_s,
 						cur->min_f);
-
-									
+		
 	/* decreasing token number */
 	cur->tokens -= (1 * 100);
 
 	DEBUG(DEBUG_TOKEN, "[%ld][%d] Tokens left: [%d]\n", jiffies, cur->task_pid, cur->tokens);
+}
+
+/*
+ * creates a new htbs group
+ */
+static struct htbs_group*
+htbs_new_group(struct request_queue *q, struct blkio_cgroup *blkcg)
+{
+	struct htbs_group *new_hg;
+	unsigned int weight;
+
+
+	new_hg = kmalloc_node(sizeof(*new_hg), GFP_KERNEL, q->node);
+	new_hg->task_pid = current->pid;
+	new_hg->num_reqs = 0;
+	new_hg->last_updated = jiffies;
+	new_hg->round_reqs = 0;
+	new_hg->is_sequential = 1;
+	new_hg->next_sector = 0;
+	new_hg->blkcg = blkcg;
+
+	weight = htbs_blkio_get_weight(blkcg);
+
+	new_hg->tokens = weight * 100;
+	new_hg->bw = weight;
+	new_hg->burst = 0;
+	new_hg->delay = 100;
+	DEBUG(DEBUG_NEW_QUEUE, "[%ld][%d] Creating new queue with cgroup [%s] ([%d] [%d] [%d])\n", 
+						jiffies, 
+						current->pid,
+						htbs_blkio_get_path(blkcg),
+						new_hg->bw,
+						new_hg->burst,
+						new_hg->delay);
+
+	return new_hg;
 }
 
 
@@ -491,67 +552,34 @@ htbs_add_request(struct request_queue *q, struct request *rq)
 static int
 htbs_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 {
-	struct task_struct *task = current;
 	struct htbs_data *hd = q->elevator->elevator_data;
-	struct htbs_group *new, *cur;
+	struct htbs_group *new_hg, *cur;
 	struct htbs_req *preq;
-	struct io_context *ioc;
-	unsigned short ioprio, ioprio_class;
+	struct blkio_cgroup *blkcg;
 
 
-	DEBUG(DEBUG_INCOMMING, "[%ld][%d] Setting up a request\n", jiffies, task->pid);
+	DEBUG(DEBUG_INCOMMING, "[%ld][%d] Setting up a request\n", jiffies, current->pid);
 
 	/* creating fair queueing parameters */
 	preq = kmalloc_node(sizeof(*preq), GFP_KERNEL, q->node);
 	rq->elevator_private = preq;
 
-	/* which queue to attach? */
-	ioc = get_io_context(gfp_mask, q->node);
-	if (!ioc)
-		printk("ERROR: Unable to get iocontext\n");
-
-	/* getting io priority */
-	ioprio = task_ioprio(ioc);
-	ioprio_class = task_ioprio_class(ioc);
-
-	put_io_context(ioc);
-
-	/* setting req ioprio */
-	REQ_IOPRIO(rq) = ioprio;
+	/* getting current cgroup */
+	blkcg = htbs_blkio_get_current();
 
 	list_for_each_entry(cur, &hd->htbs_groups, list) {
 
 		/* there is a queue already */
-		if (cur->ioprio == ioprio) {
+		if (cur->blkcg == blkcg) {
 			return 0;
 		}
 	}
 
-	/* if we get here, we should create a new group queue */
-	new = kmalloc_node(sizeof(*new), GFP_KERNEL, q->node);
-	new->task_pid = task->pid;
-	new->num_reqs = 0;
-	new->last_updated = jiffies;
-	new->round_reqs = 0;
-	new->is_sequential = 1;
-	new->next_sector = 0;
-	new->ioprio = ioprio;
-	new->ioprio_class = ioprio_class;
+	/* creates a new htbs group*/
+	new_hg = htbs_new_group(q, blkcg);
 
-	new->tokens = parameters[new->ioprio][0] * 100;
-	new->bw = parameters[new->ioprio][0];
-	new->burst = parameters[new->ioprio][1];
-	new->delay = parameters[new->ioprio][2];
-	DEBUG(DEBUG_NEW_QUEUE, "[%ld][%d] Creating new queue with ioprio [%hi] ([%d] [%d] [%d])\n", 
-						jiffies, 
-						task->pid,
-						new->ioprio,
-						new->bw,
-						new->burst,
-						new->delay);
-
-	INIT_LIST_HEAD(&new->req_list);
-	list_add_tail(&new->list, &hd->htbs_groups);
+	INIT_LIST_HEAD(&new_hg->req_list);
+	list_add_tail(&new_hg->list, &hd->htbs_groups);
 
 	return 0;
 }
@@ -685,8 +713,41 @@ htbs_cleanup_store(struct elevator_queue *e, const char *page, size_t count)
 		cur->round_reqs = 0;
 		cur->is_sequential = 1;
 		cur->next_sector = 0;
-		cur->tokens = parameters[cur->ioprio][0] * 100;
+		cur->tokens = htbs_blkio_get_weight(cur->blkcg) * 100;
 	}
+	return count;
+}
+
+/* 
+ * this function just prints the cgroup hierarchy. we must 
+ * remove it sometime. 
+ */
+static ssize_t 
+htbs_cgroup_show(struct elevator_queue *e, char *page)
+{
+	struct blkio_cgroup *blkcg = task_blkio_cgroup(current);
+	struct blkio_group *blkg;
+	struct hlist_node *n;
+
+
+	if (blkcg == &blkio_root_cgroup)
+		printk("htbs: cgroup root [%d]\n", blkcg->weight);
+	else
+		printk("htbs: cgroup non-root [%d]\n", blkcg->weight);
+
+	hlist_for_each_entry_rcu(blkg, n, &blkcg->blkg_list, blkcg_node) {
+		printk("htbs: [%s] [%d]\n", blkg->path, blkg->blkcg_id);
+		if (blkg->dev) {
+			printk("htbs: tem dev\n");
+		}
+	}
+
+	return sprintf(page, "0\n");
+}
+
+static ssize_t 
+htbs_cgroup_store(struct elevator_queue *e, const char *page, size_t count)
+{
 	return count;
 }
 
@@ -698,6 +759,7 @@ static struct elv_fs_entry htbs_attrs[] = {
 	__ATTR(max_reqs, S_IRUGO|S_IWUSR, htbs_max_reqs_show, htbs_max_reqs_store),
 	__ATTR(debug_level, S_IRUGO|S_IWUSR, htbs_debug_level_show, htbs_debug_level_store),
 	__ATTR(cleanup, S_IRUGO|S_IWUSR, htbs_cleanup_show, htbs_cleanup_store),
+	__ATTR(test_cgroup, S_IRUGO|S_IWUSR, htbs_cgroup_show, htbs_cgroup_store),
 	__ATTR_NULL,
 };
 
